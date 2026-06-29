@@ -1,0 +1,16 @@
+{
+  "name": "smart-cube-hub",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && .venv/bin/python -m uvicorn app.main:app --reload",
+    "build:frontend": "cd frontend && npm run build",
+    "build:shared": "cd shared && npx tsc",
+    "lint": "cd frontend && npx tsc --noEmit"
+  },
+  "workspaces": [
+    "frontend",
+    "shared"
+  ]
+}
