@@ -4,6 +4,15 @@ import { useCubeStore } from '../store/cubeStore'
 
 const MAC_CACHE_PREFIX = 'sch-mac:'
 
+type CubeEventListener = (event: SmartCubeEvent) => void
+
+const listeners: Set<CubeEventListener> = new Set()
+
+export function addCubeEventListener(listener: CubeEventListener): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
 function getCachedMac(device: BluetoothDevice): string | null {
   if (typeof localStorage === 'undefined') return null
   try {
@@ -66,6 +75,7 @@ export function useCubeConnection() {
       setStatus('connected')
       conn.events$.subscribe((event: SmartCubeEvent) => {
         addEvent(event)
+        listeners.forEach((listener) => listener(event))
       })
     } catch (e) {
       console.error(e)
@@ -92,5 +102,5 @@ export function useCubeConnection() {
     }
   }, [connection])
 
-  return { status: useCubeStore((s) => s.status), connect, disconnect, error, pendingMacDevice, provideMac }
+  return { status: useCubeStore((s) => s.status), connect, disconnect, error, pendingMacDevice, provideMac, addCubeEventListener }
 }

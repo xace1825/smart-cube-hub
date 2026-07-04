@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useCubeStore } from './store/cubeStore'
-import { useCubeConnection } from './hooks/useCubeConnection'
+import { useCubeConnection, addCubeEventListener } from './hooks/useCubeConnection'
+import type { SmartCubeEvent } from 'smartcube-web-bluetooth'
 import { useSolveTimer } from './hooks/useSolveTimer'
 import { CubeVisualizer } from './components/CubeVisualizer'
 import { HashRouter as Router, Route, Routes } from 'react-router-dom'
@@ -29,9 +30,13 @@ function HomePage() {
     formattedInspection,
     history,
     penalty,
+    autoTimerMode,
+    setAutoTimerMode,
     nextScramble,
     startInspection,
     stopSolve,
+    stopSolveWithPenalty,
+    handleCubeEvent,
     applyPlusTwo,
     applyDnf,
     getFinalDisplayTime,
@@ -49,6 +54,15 @@ function HomePage() {
     nextScramble()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Subscribe to Bluetooth cube events for auto-timer.
+  useEffect(() => {
+    const unsubscribe = addCubeEventListener((event: SmartCubeEvent) => {
+      handleCubeEvent(event as { type: string; facelets?: string; move?: string; timestamp?: number })
+    })
+    return unsubscribe
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleCubeEvent])
 
   useEffect(() => {
     let spaceDownAt = 0
@@ -68,7 +82,14 @@ function HomePage() {
       e.preventDefault()
       const held = performance.now() - spaceDownAt
       if (isSolving) {
-        stopSolve()
+        stopSolveWithPenalty(held >= 300 ? 'dnf' : 'ok')
+      } else if (isInspection) {
+        if (held >= 300) {
+          stopSolveWithPenalty('dnf')
+        } else if (autoTimerMode === 'off') {
+          // manual mode: short space during inspection starts solve immediately
+          startInspection()
+        }
       } else if (canStart && held < 300) {
         startInspection()
       }
@@ -80,7 +101,36 @@ function HomePage() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [isSolving, canStart, isDone, nextScramble, startInspection, stopSolve])
+    }, [isSolving, isInspection, canStart, isDone, autoTimerMode, nextScramble, startInspection, stopSolveWithPenalty])
+
+    // Also listen for long-press DNF via dedicated handler if held >= 300ms during solve.
+    useEffect(() => {
+    let timer: number | undefined
+
+    const onDown = (e: KeyboardEvent) => {
+      if (e.repeat || e.key !== ' ' || (phase !== 'solving' && phase !== 'inspection')) return
+      e.preventDefault()
+      timer = window.setTimeout(() => {
+        stopSolveWithPenalty('dnf')
+      }, 300)
+    }
+
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key !== ' ' || (phase !== 'solving' && phase !== 'inspection')) return
+      if (timer) {
+        clearTimeout(timer)
+        timer = undefined
+      }
+    }
+
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+      if (timer) clearTimeout(timer)
+    }
+    }, [phase, stopSolveWithPenalty])
 
   const handleMacSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -168,16 +218,45 @@ function HomePage() {
       <section className="bg-white rounded-xl shadow p-6 mb-6">
         <div className="flex flex-wrap items-center justify-between mb-4 gap-4">
           <h2 className="text-xl font-semibold">Скрамбл</h2>
-          <button
-            onClick={nextScramble}
-            className="px-4 py-2 bg-slate-100 text-slate-800 rounded-lg hover:bg-slate-200"
-          >
-            Новый скрамбл
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 bg-slate-100 rounded-lg p-1">
+              {(['cube', 'inspection-cube', 'off'] as const).map((mode) => {
+                const labels: Record<typeof mode, string> = {
+                  cube: 'Авто: по кубу',
+                  'inspection-cube': 'Авто: старт/стоп',
+                  off: 'Ручной',
+                }
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setAutoTimerMode(mode)}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
+                      autoTimerMode === mode
+                        ? 'bg-white shadow text-blue-700'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {labels[mode]}
+                  </button>
+                )
+              })}
+            </div>
+            <button
+              onClick={nextScramble}
+              className="px-4 py-2 bg-slate-100 text-slate-800 rounded-lg hover:bg-slate-200"
+            >
+              Новый скрамбл
+            </button>
+          </div>
         </div>
         <div className="text-lg sm:text-xl font-mono break-words bg-slate-50 p-4 rounded-lg min-h-[4rem] flex items-center">
           {scrambleAlg || 'Генерация скрамбла...'}
         </div>
+        <p className="text-sm text-slate-500 mt-3">
+          {autoTimerMode === 'cube' && 'Режим авто: нажми «Старт инспекции», первый ход куба запускает сборку, собранное состояние останавливает таймер.'}
+          {autoTimerMode === 'inspection-cube' && 'Режим авто: инспекция запускается вручную, старт и стоп — по движению куба.'}
+          {autoTimerMode === 'off' && 'Ручной режим: пробелом управляешь инспекцией и остановкой.'}
+        </p>
       </section>
 
       <section className="grid md:grid-cols-2 gap-6 mb-6">
@@ -217,7 +296,8 @@ function HomePage() {
           </div>
 
           <p className="text-sm text-slate-500 mt-4">
-            Пробел: старт/стоп. При инспекции автостарт сборки через 15 сек.
+            Пробел: старт/стоп. При инспекции автостарт сборки через 15 сек. Зажми пробел 0.3 с — DNF.
+            {autoTimerMode !== 'off' && ' Bluetooth-куб сам стартует и останавливает таймер.'}
           </p>
         </div>
 

@@ -27,6 +27,8 @@ export interface SolveRecord {
   createdAt: number
 }
 
+export type AutoTimerMode = 'off' | 'cube' | 'inspection-cube'
+
 const INSPECTION_MS = 15_000
 const INSPECTION_WARNING_1_MS = 8_000
 const INSPECTION_WARNING_2_MS = 12_000
@@ -46,10 +48,13 @@ export function useSolveTimer() {
   const [solveElapsed, setSolveElapsed] = useState<number>(0)
   const [history, setHistory] = useState<SolveRecord[]>([])
   const [penalty, setPenalty] = useState<'ok' | '+2' | 'dnf'>('ok')
+  const [autoTimerMode, setAutoTimerMode] = useState<AutoTimerMode>('cube')
 
   const rafRef = useRef<number | null>(null)
   const phaseStartRef = useRef<number>(0)
   const phaseRef = useRef<SolvePhase>('scramble')
+  const moveDuringInspectionRef = useRef(false)
+  const inspectionExcessMsRef = useRef(0)
 
   useEffect(() => {
     phaseRef.current = phase
@@ -78,15 +83,17 @@ export function useSolveTimer() {
   const startInspection = useCallback(() => {
     if (phaseRef.current !== 'scramble' && phaseRef.current !== 'done') return
     cancelTick()
+    moveDuringInspectionRef.current = false
+    inspectionExcessMsRef.current = 0
     phaseStartRef.current = performance.now()
     setPhase('inspection')
     setInspectionRemaining(INSPECTION_MS)
   }, [cancelTick])
 
-  const startSolve = useCallback(() => {
+  const startSolve = useCallback((triggerAt?: number) => {
     if (phaseRef.current !== 'inspection') return
     cancelTick()
-    phaseStartRef.current = performance.now()
+    phaseStartRef.current = triggerAt ?? performance.now()
     setPhase('solving')
     setSolveElapsed(0)
   }, [cancelTick])
@@ -130,7 +137,11 @@ export function useSolveTimer() {
       const remaining = Math.max(0, INSPECTION_MS - elapsed)
       setInspectionRemaining(remaining)
       if (elapsed >= INSPECTION_MS) {
-        startSolve()
+        // Only auto-start solve at end of inspection if no cube move started it earlier.
+        // In cube mode the move handler already started solve with the actual move timestamp.
+        if (!moveDuringInspectionRef.current) {
+          startSolve()
+        }
         return
       }
     } else if (phaseRef.current === 'solving') {
@@ -139,6 +150,79 @@ export function useSolveTimer() {
     }
     rafRef.current = requestAnimationFrame(tick)
   }, [startSolve])
+
+  // Cube auto-timer: first MOVE during inspection starts the solve at that timestamp.
+  // FACELETS event triggers stop when cube is solved.
+  const isSolvedFacelet = useCallback((facelets: string): boolean => {
+    if (facelets.length !== 54) return false
+    const faces = [
+      facelets.slice(0, 9),
+      facelets.slice(9, 18),
+      facelets.slice(18, 27),
+      facelets.slice(27, 36),
+      facelets.slice(36, 45),
+      facelets.slice(45, 54),
+    ]
+    return faces.every((f) => new Set(f).size === 1)
+  }, [])
+
+  const handleCubeEvent = useCallback((event: { type: string; facelets?: string; move?: string; timestamp?: number }) => {
+    if (autoTimerMode === 'off') return
+
+    if (phaseRef.current === 'inspection') {
+      if (event.type === 'MOVE' && event.move) {
+        moveDuringInspectionRef.current = true
+        const now = performance.now()
+        const inspectionElapsed = now - phaseStartRef.current
+        if (inspectionElapsed > INSPECTION_MS) {
+          inspectionExcessMsRef.current = inspectionElapsed - INSPECTION_MS
+          // WCA: late start incurs +2 penalty
+          setPenalty('+2')
+        }
+        startSolve(now)
+      }
+    }
+
+    if (phaseRef.current === 'solving' && event.type === 'FACELETS' && event.facelets) {
+      if (isSolvedFacelet(event.facelets)) {
+        stopSolve()
+      }
+    }
+  }, [autoTimerMode, startSolve, stopSolve, isSolvedFacelet])
+
+  const stopSolveWithPenalty = useCallback((manualPenalty: 'ok' | '+2' | 'dnf') => {
+    if (phaseRef.current === 'solving' || phaseRef.current === 'inspection') {
+      if (phaseRef.current === 'inspection') {
+        cancelTick()
+        setPhase('done')
+        const record: SolveRecord = {
+          id: crypto.randomUUID?.() || String(Date.now()),
+          scramble: scrambleAlg,
+          inspectionMs: Math.round(performance.now() - phaseStartRef.current),
+          solveMs: 0,
+          penalty: manualPenalty,
+          createdAt: Date.now(),
+        }
+        setHistory((prev) => [record, ...prev].slice(0, 1000))
+        setPenalty(manualPenalty)
+        return
+      }
+      cancelTick()
+      const finalSolveMs = Math.max(0, Math.round(performance.now() - phaseStartRef.current))
+      setSolveElapsed(finalSolveMs)
+      setPhase('done')
+      const record: SolveRecord = {
+        id: crypto.randomUUID?.() || String(Date.now()),
+        scramble: scrambleAlg,
+        inspectionMs: INSPECTION_MS,
+        solveMs: finalSolveMs,
+        penalty: manualPenalty,
+        createdAt: Date.now(),
+      }
+      setHistory((prev) => [record, ...prev].slice(0, 1000))
+      setPenalty(manualPenalty)
+    }
+  }, [cancelTick, scrambleAlg])
 
   useEffect(() => {
     if (phase === 'inspection' || phase === 'solving') {
@@ -188,24 +272,24 @@ export function useSolveTimer() {
   }, [phase])
 
   const applyPlusTwo = useCallback(() => {
-    setPenalty((prev) => (prev === 'dnf' ? '+2' : prev === '+2' ? 'ok' : '+2'))
+    const next = penalty === 'dnf' ? '+2' : penalty === '+2' ? 'ok' : '+2'
+    setPenalty(next)
     setHistory((prev) => {
       if (prev.length === 0) return prev
       const [latest, ...rest] = prev
-      const nextPenalty = latest.penalty === 'dnf' ? '+2' : latest.penalty === '+2' ? 'ok' : '+2'
-      return [{ ...latest, penalty: nextPenalty }, ...rest]
+      return [{ ...latest, penalty: next }, ...rest]
     })
-  }, [])
+  }, [penalty])
 
   const applyDnf = useCallback(() => {
-    setPenalty((prev) => (prev === 'dnf' ? 'ok' : 'dnf'))
+    const next = penalty === 'dnf' ? 'ok' : 'dnf'
+    setPenalty(next)
     setHistory((prev) => {
       if (prev.length === 0) return prev
       const [latest, ...rest] = prev
-      const nextPenalty = latest.penalty === 'dnf' ? 'ok' : 'dnf'
-      return [{ ...latest, penalty: nextPenalty }, ...rest]
+      return [{ ...latest, penalty: next }, ...rest]
     })
-  }, [])
+  }, [penalty])
 
   const getFinalDisplayTime = useCallback((record: SolveRecord) => {
     if (record.penalty === 'dnf') return 'DNF'
@@ -226,10 +310,14 @@ export function useSolveTimer() {
     formattedFullTime: formatMs,
     history,
     penalty,
+    autoTimerMode,
+    setAutoTimerMode,
     nextScramble,
     startInspection,
     startSolve,
     stopSolve,
+    stopSolveWithPenalty,
+    handleCubeEvent,
     applyPlusTwo,
     applyDnf,
     getFinalDisplayTime,
