@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { randomScrambleForEvent } from 'cubing/scramble'
 
 export type SolvePhase = 'scramble' | 'inspection' | 'solving' | 'done'
+
+const FACES = ['R', 'L', 'U', 'D', 'F', 'B']
+const MODS = ['', "'", '2']
+
+function generate333Scramble(length = 20): string {
+  const moves: string[] = []
+  for (let i = 0; i < length; i++) {
+    let face = FACES[Math.floor(Math.random() * FACES.length)]
+    // avoid same face consecutive (basic WCA-style)
+    while (i > 0 && moves[i - 1].startsWith(face)) {
+      face = FACES[Math.floor(Math.random() * FACES.length)]
+    }
+    moves.push(face + MODS[Math.floor(Math.random() * MODS.length)])
+  }
+  return moves.join(' ')
+}
 
 export interface SolveRecord {
   id: string
@@ -47,18 +62,17 @@ export function useSolveTimer() {
     }
   }, [])
 
-  const generateScramble = useCallback(async () => {
-    const alg = await randomScrambleForEvent('333')
-    setScrambleAlg(alg.toString())
+  const generateScramble = useCallback(() => {
+    setScrambleAlg(generate333Scramble())
   }, [])
 
-  const nextScramble = useCallback(async () => {
+  const nextScramble = useCallback(() => {
     cancelTick()
     setPhase('scramble')
     setInspectionRemaining(INSPECTION_MS)
     setSolveElapsed(0)
     setPenalty('ok')
-    await generateScramble()
+    generateScramble()
   }, [cancelTick, generateScramble])
 
   const startInspection = useCallback(() => {
