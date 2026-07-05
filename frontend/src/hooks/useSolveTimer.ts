@@ -33,6 +33,23 @@ const INSPECTION_MS = 15_000
 const INSPECTION_WARNING_1_MS = 8_000
 const INSPECTION_WARNING_2_MS = 12_000
 
+export function invertMove(move: string): string {
+  if (move.length === 1) return move + "'"
+  if (move.endsWith("'")) return move.slice(0, -1)
+  if (move.endsWith('2')) return move
+  return move
+}
+
+export function invertAlgorithm(alg: string): string {
+  return alg
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .reverse()
+    .map(invertMove)
+    .join(' ')
+}
+
 function formatMs(ms: number) {
   const totalSeconds = Math.floor(ms / 1000)
   const minutes = Math.floor(totalSeconds / 60)
@@ -44,6 +61,13 @@ function formatMs(ms: number) {
 export function useSolveTimer() {
   const [phase, setPhase] = useState<SolvePhase>('scramble')
   const [scrambleAlg, setScrambleAlg] = useState<string>('')
+  const [performedMoves, setPerformedMoves] = useState<string[]>([])
+  const [scrambleProgress, setScrambleProgress] = useState<{ matched: number; diverged: boolean; expected: string | null; remaining: string[] }>({
+    matched: 0,
+    diverged: false,
+    expected: null,
+    remaining: [],
+  })
   const [inspectionRemaining, setInspectionRemaining] = useState<number>(INSPECTION_MS)
   const [solveElapsed, setSolveElapsed] = useState<number>(0)
   const [history, setHistory] = useState<SolveRecord[]>([])
@@ -67,9 +91,31 @@ export function useSolveTimer() {
     }
   }, [])
 
-  const generateScramble = useCallback(() => {
-    setScrambleAlg(generate333Scramble())
+  const computeScrambleProgress = useCallback((moves: string[], scramble: string) => {
+    const target = scramble.trim().split(/\s+/).filter(Boolean)
+    let matched = 0
+    let diverged = false
+    for (let i = 0; i < Math.min(moves.length, target.length); i++) {
+      if (moves[i] === target[i]) {
+        matched = i + 1
+      } else {
+        diverged = true
+        break
+      }
+    }
+    if (moves.length > target.length) diverged = true
+    else if (moves.length === target.length && matched !== target.length) diverged = true
+    else if (moves.length < target.length && matched !== moves.length) diverged = true
+    const expected = matched < target.length ? target[matched] : null
+    return { matched, diverged, expected, remaining: target.slice(matched) }
   }, [])
+
+  const generateScramble = useCallback(() => {
+    const alg = generate333Scramble()
+    setScrambleAlg(alg)
+    setPerformedMoves([])
+    setScrambleProgress(computeScrambleProgress([], alg))
+  }, [computeScrambleProgress])
 
   const nextScramble = useCallback(() => {
     cancelTick()
@@ -183,12 +229,20 @@ export function useSolveTimer() {
       }
     }
 
+    if (event.type === 'MOVE' && event.move) {
+      setPerformedMoves((prev) => {
+        const next = [...prev, event.move as string]
+        setScrambleProgress(computeScrambleProgress(next, scrambleAlg))
+        return next
+      })
+    }
+
     if (phaseRef.current === 'solving' && event.type === 'FACELETS' && event.facelets) {
       if (isSolvedFacelet(event.facelets)) {
         stopSolve()
       }
     }
-  }, [autoTimerMode, startSolve, stopSolve, isSolvedFacelet])
+  }, [autoTimerMode, startSolve, stopSolve, isSolvedFacelet, scrambleAlg, computeScrambleProgress])
 
   const stopSolveWithPenalty = useCallback((manualPenalty: 'ok' | '+2' | 'dnf') => {
     if (phaseRef.current === 'solving' || phaseRef.current === 'inspection') {
@@ -303,6 +357,8 @@ export function useSolveTimer() {
   return {
     phase,
     scrambleAlg,
+    performedMoves,
+    scrambleProgress,
     inspectionRemaining,
     solveElapsed,
     formattedSolveTime,

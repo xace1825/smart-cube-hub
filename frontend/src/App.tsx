@@ -26,6 +26,8 @@ function HomePage() {
   const {
     phase,
     scrambleAlg,
+    performedMoves,
+    scrambleProgress,
     formattedSolveTime,
     formattedInspection,
     history,
@@ -249,14 +251,55 @@ function HomePage() {
             </button>
           </div>
         </div>
-        <div className="text-lg sm:text-xl font-mono break-words bg-slate-50 p-4 rounded-lg min-h-[4rem] flex items-center">
-          {scrambleAlg || 'Генерация скрамбла...'}
+        <div className="text-lg sm:text-xl font-mono break-words bg-slate-50 p-4 rounded-lg min-h-[4rem] flex flex-col gap-2">
+          <div>{scrambleAlg || 'Генерация скрамбла...'}</div>
+          {scrambleAlg && phase !== 'scramble' && (
+            <div className="flex flex-wrap gap-1 text-base sm:text-lg">
+              {scrambleAlg.split(/\s+/).filter(Boolean).map((move, idx) => {
+                let cls = 'px-2 py-0.5 rounded-md '
+                if (idx < scrambleProgress.matched) {
+                  cls += 'bg-green-100 text-green-700'
+                } else if (idx === scrambleProgress.matched && !scrambleProgress.diverged) {
+                  cls += 'bg-blue-600 text-white font-bold shadow ring-2 ring-blue-300'
+                } else if (scrambleProgress.diverged && idx < performedMoves.length) {
+                  cls += 'bg-red-100 text-red-700'
+                } else {
+                  cls += 'text-slate-500'
+                }
+                return (
+                  <span key={idx} className={cls}>
+                    {move}
+                  </span>
+                )
+              })}
+            </div>
+          )}
         </div>
-        <p className="text-sm text-slate-500 mt-3">
+        <div className="text-sm text-slate-500 mt-3">
           {autoTimerMode === 'cube' && 'Режим авто: нажми «Старт инспекции», первый ход куба запускает сборку, собранное состояние останавливает таймер.'}
           {autoTimerMode === 'inspection-cube' && 'Режим авто: инспекция запускается вручную, старт и стоп — по движению куба.'}
           {autoTimerMode === 'off' && 'Ручной режим: пробелом управляешь инспекцией и остановкой.'}
-        </p>
+        </div>
+
+        {scrambleProgress.diverged && phase !== 'scramble' && phase !== 'done' && (
+          <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p className="font-medium text-yellow-900 mb-2">Отклонение от скрамбла</p>
+            <p className="text-sm text-yellow-800 mb-2">
+              Чтобы вернуться к исходному скрамблу, выполни обратные ходы:
+            </p>
+            <div className="font-mono text-lg bg-white p-3 rounded border border-yellow-300">
+              {(() => {
+                const undo = [...performedMoves].reverse().map((m) => {
+                  if (m.length === 1) return m + "'"
+                  if (m.endsWith("'")) return m.slice(0, -1)
+                  if (m.endsWith('2')) return m
+                  return m
+                }).join(' ')
+                return undo || '—'
+              })()}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="grid md:grid-cols-2 gap-6 mb-6">
