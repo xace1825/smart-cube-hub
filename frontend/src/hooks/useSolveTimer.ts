@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { faceletsFromScramble, isFaceletMatch } from '../cubeModel'
 
 export type SolvePhase = 'scramble' | 'inspection' | 'solving' | 'done'
 
@@ -61,6 +62,7 @@ function formatMs(ms: number) {
 export function useSolveTimer() {
   const [phase, setPhase] = useState<SolvePhase>('scramble')
   const [scrambleAlg, setScrambleAlg] = useState<string>('')
+  const [scrambleTargetFacelets, setScrambleTargetFacelets] = useState<string>('')
   const [performedMoves, setPerformedMoves] = useState<string[]>([])
   const [scrambleProgress, setScrambleProgress] = useState<{ matched: number; diverged: boolean; expected: string | null; remaining: string[] }>({
     matched: 0,
@@ -79,6 +81,7 @@ export function useSolveTimer() {
   const phaseRef = useRef<SolvePhase>('scramble')
   const moveDuringInspectionRef = useRef(false)
   const inspectionExcessMsRef = useRef(0)
+  const matchedInspectionRef = useRef(false)
 
   useEffect(() => {
     phaseRef.current = phase
@@ -113,8 +116,10 @@ export function useSolveTimer() {
   const generateScramble = useCallback(() => {
     const alg = generate333Scramble()
     setScrambleAlg(alg)
+    setScrambleTargetFacelets(faceletsFromScramble(alg))
     setPerformedMoves([])
     setScrambleProgress(computeScrambleProgress([], alg))
+    matchedInspectionRef.current = false
   }, [computeScrambleProgress])
 
   const nextScramble = useCallback(() => {
@@ -126,12 +131,13 @@ export function useSolveTimer() {
     generateScramble()
   }, [cancelTick, generateScramble])
 
-  const startInspection = useCallback(() => {
+  const startInspection = useCallback((triggerAt?: number) => {
     if (phaseRef.current !== 'scramble' && phaseRef.current !== 'done') return
     cancelTick()
     moveDuringInspectionRef.current = false
     inspectionExcessMsRef.current = 0
-    phaseStartRef.current = performance.now()
+    matchedInspectionRef.current = true
+    phaseStartRef.current = triggerAt ?? performance.now()
     setPhase('inspection')
     setInspectionRemaining(INSPECTION_MS)
   }, [cancelTick])
@@ -215,6 +221,14 @@ export function useSolveTimer() {
   const handleCubeEvent = useCallback((event: { type: string; facelets?: string; move?: string; timestamp?: number }) => {
     if (autoTimerMode === 'off') return
 
+    // Auto-inspection: when the cube matches the scramble target state, start inspection immediately.
+    if ((phaseRef.current === 'scramble' || phaseRef.current === 'done') && !matchedInspectionRef.current && event.type === 'FACELETS' && event.facelets) {
+      if (isFaceletMatch(event.facelets, scrambleTargetFacelets)) {
+        const now = performance.now()
+        startInspection(now)
+      }
+    }
+
     if (phaseRef.current === 'inspection') {
       if (event.type === 'MOVE' && event.move) {
         moveDuringInspectionRef.current = true
@@ -242,7 +256,7 @@ export function useSolveTimer() {
         stopSolve()
       }
     }
-  }, [autoTimerMode, startSolve, stopSolve, isSolvedFacelet, scrambleAlg, computeScrambleProgress])
+  }, [autoTimerMode, startSolve, stopSolve, isSolvedFacelet, scrambleAlg, computeScrambleProgress, scrambleTargetFacelets, startInspection])
 
   const stopSolveWithPenalty = useCallback((manualPenalty: 'ok' | '+2' | 'dnf') => {
     if (phaseRef.current === 'solving' || phaseRef.current === 'inspection') {
@@ -377,5 +391,6 @@ export function useSolveTimer() {
     applyPlusTwo,
     applyDnf,
     getFinalDisplayTime,
+    scrambleTargetFacelets,
   }
 }

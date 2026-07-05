@@ -90,10 +90,10 @@ function HomePage() {
           stopSolveWithPenalty('dnf')
         } else if (autoTimerMode === 'off') {
           // manual mode: short space during inspection starts solve immediately
-          startInspection()
+          // startInspection() no-op in manual; solve starts at 15s or key
         }
-      } else if (canStart && held < 300) {
-        startInspection()
+      } else if (canStart && held < 300 && autoTimerMode === 'off') {
+        // Only in manual mode space starts inspection. In auto modes inspection is triggered by cube state.
       }
     }
 
@@ -103,7 +103,7 @@ function HomePage() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
-    }, [isSolving, isInspection, canStart, isDone, autoTimerMode, nextScramble, startInspection, stopSolveWithPenalty])
+    }, [isSolving, isInspection, canStart, isDone, autoTimerMode, nextScramble, stopSolveWithPenalty])
 
     // Also listen for long-press DNF via dedicated handler if held >= 300ms during solve.
     useEffect(() => {
@@ -276,8 +276,8 @@ function HomePage() {
           )}
         </div>
         <div className="text-sm text-slate-500 mt-3">
-          {autoTimerMode === 'cube' && 'Режим авто: нажми «Старт инспекции», первый ход куба запускает сборку, собранное состояние останавливает таймер.'}
-          {autoTimerMode === 'inspection-cube' && 'Режим авто: инспекция запускается вручную, старт и стоп — по движению куба.'}
+          {autoTimerMode === 'cube' && 'Режим авто: собери скрамбл — инспекция начнётся сама, первый ход запустит сборку, собранное состояние остановит таймер.'}
+          {autoTimerMode === 'inspection-cube' && 'Режим авто: собери скрамбл для старта, старт и стоп — по движению куба.'}
           {autoTimerMode === 'off' && 'Ручной режим: пробелом управляешь инспекцией и остановкой.'}
         </div>
 
@@ -312,13 +312,16 @@ function HomePage() {
           </div>
 
           <div className="flex justify-center gap-3 flex-wrap">
-            {canStart && (
+            {autoTimerMode === 'off' && canStart && (
               <button
-                onClick={startInspection}
+                onClick={() => startInspection()}
                 className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 text-lg"
               >
                 {isDone ? 'Следующий' : 'Старт инспекции'}
               </button>
+            )}
+            {autoTimerMode !== 'off' && phase === 'scramble' && (
+              <span className="text-slate-500 text-base">Собери скрамбл — инспекция начнётся автоматически</span>
             )}
             {isSolving && (
               <button

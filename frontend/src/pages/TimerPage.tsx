@@ -114,7 +114,7 @@ export function TimerPage() {
           <div className="flex justify-center gap-3 flex-wrap">
             {canStart && (
               <button
-                onClick={startInspection}
+                onClick={() => startInspection()}
                 className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 text-lg"
               >
                 {isDone ? 'Следующий' : 'Старт инспекции'}
